@@ -7,6 +7,7 @@ MYPY_FLAGS = --warn-return-any \
 			 --check-untyped-defs
 
 GOINFRE = $(HOME)/goinfre/$(USER)
+
 export HF_HOME = $(GOINFRE)/.llm
 export UV_CACHE_DIR = $(GOINFRE)/.uv-cache
 export UV_PYTHON_INSTALL_DIR = $(GOINFRE)/.uv-python
@@ -18,27 +19,27 @@ BIN = $(ENV)/bin
 PYTHON = $(BIN)/python3
 
 install:
-	mkdir -p $(UV_CACHE_DIR) $(HF_HOME)
-	uv sync -q
+	@mkdir -p $(UV_CACHE_DIR) $(HF_HOME)
+	@uv sync -q
 
 run: install
-	if [ -f $(MAIN) ]; then \
+	@if [ -f $(MAIN) ]; then \
 		uv run -q $(MAIN); \
 	else \
 		echo "\nPas de fichier main\n"; \
 	fi
 
 debug: install
-	if [ -f $(MAIN) ]; then \
+	@if [ -f $(MAIN) ]; then \
 		uv run -q python3 -m pdb $(MAIN); \
 	else \
 		echo "\nPas de fichier main\n"; \
 	fi
 
 clean:
-	find . -type d -name "__pycache__" -exec $(RM) {} +
-	find . -type d -name ".mypy_cache" -exec $(RM) {} +
-	find . -type d -name ".pytest_cache" -exec $(RM) {} +
+	@find . -type d -name "__pycache__" -exec $(RM) {} +
+	@find . -type d -name ".mypy_cache" -exec $(RM) {} +
+	@find . -type d -name ".pytest_cache" -exec $(RM) {} +
 
 fclean: clean
 	$(RM) $(ENV)
