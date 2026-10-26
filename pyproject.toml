@@ -8,10 +8,14 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.2.6,<3.0.0",
     "pydantic>=2.13.4,<3.0.0",
+    "llm_sdk",
 ]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
 	"mypy",
 	"flake8",
 ]
+
+[tool.uv.sources]
+llm_sdk = { path = "llm_sdk", editable = true }
