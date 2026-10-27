@@ -6,7 +6,7 @@ MYPY_FLAGS = --warn-return-any \
 			 --disallow-untyped-defs \
 			 --check-untyped-defs
 
-GOINFRE = $(HOME)/goinfre/$(USER)
+GOINFRE = $(HOME)/sgoinfre/$(USER)
 
 export HF_HOME = $(GOINFRE)/.llm
 export UV_CACHE_DIR = $(GOINFRE)/.uv-cache

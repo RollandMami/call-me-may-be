@@ -9,6 +9,7 @@ dependencies = [
     "numpy>=2.2.6,<3.0.0",
     "pydantic>=2.13.4,<3.0.0",
     "llm_sdk",
+    "python-dotenv",
 ]
 
 [dependency-groups]
