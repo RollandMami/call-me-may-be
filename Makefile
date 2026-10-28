@@ -1,10 +1,10 @@
 RM = rm -rf
-MAIN = main.py
+MAIN = src
 MYPY_FLAGS = --warn-return-any \
-			 --warn-unused-ignores \
-			 --ignore-missing-imports \
-			 --disallow-untyped-defs \
-			 --check-untyped-defs
+             --warn-unused-ignores \
+             --ignore-missing-imports \
+             --disallow-untyped-defs \
+             --check-untyped-defs
 
 GOINFRE = $(HOME)/sgoinfre/$(USER)
 
@@ -20,14 +20,11 @@ PYTHON = $(BIN)/python3
 
 install:
 	@mkdir -p $(UV_CACHE_DIR) $(HF_HOME)
-	@uv sync -q
+	uv sync -q
 
 run: install
-	@if [ -f $(MAIN) ]; then \
-		uv run -q $(MAIN); \
-	else \
-		echo "\nPas de fichier main\n"; \
-	fi
+	uv run $(MAIN)
+# 	uv run -q -m $(MAIN) --functions_definition data/input/functions_definition.json --input data/function_calling_tests.json --output data/output/function_calling_results.json;
 
 debug: install
 	@if [ -f $(MAIN) ]; then \
@@ -37,9 +34,9 @@ debug: install
 	fi
 
 clean:
-	@find . -type d -name "__pycache__" -exec $(RM) {} +
-	@find . -type d -name ".mypy_cache" -exec $(RM) {} +
-	@find . -type d -name ".pytest_cache" -exec $(RM) {} +
+	@find . -type d -name "__pycache__" -exec rm -rf {} +
+	@find . -type d -name ".mypy_cache" -exec rm -rf {} +
+	@find . -type d -name ".pytest_cache" -exec rm -rf {} +
 
 fclean: clean
 	$(RM) $(ENV)
