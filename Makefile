@@ -8,10 +8,15 @@ MYPY_FLAGS = --warn-return-any \
 
 GOINFRE = $(HOME)/sgoinfre/$(USER)
 
-export HF_HOME = $(GOINFRE)/.llm
-export UV_CACHE_DIR = $(GOINFRE)/.uv-cache
-export UV_PYTHON_INSTALL_DIR = $(GOINFRE)/.uv-python
-export UV_PROJECT_ENVIRONMENT = $(GOINFRE)/cmb-venv
+HF_HOME := $(GOINFRE)/.llm
+UV_CACHE_DIR := $(GOINFRE)/.uv-cache
+UV_PYTHON_INSTALL_DIR := $(GOINFRE)/.uv-python
+UV_PROJECT_ENVIRONMENT := $(GOINFRE)/cmb-venv
+
+export HF_HOME
+export UV_CACHE_DIR
+export UV_PYTHON_INSTALL_DIR
+export UV_PROJECT_ENVIRONMENT
 
 ENV = $(UV_PROJECT_ENVIRONMENT)
 
@@ -23,8 +28,7 @@ install:
 	uv sync -q
 
 run: install
-	uv run $(MAIN)
-# 	uv run -q -m $(MAIN) --functions_definition data/input/functions_definition.json --input data/function_calling_tests.json --output data/output/function_calling_results.json;
+	uv run -q python -m $(MAIN)
 
 debug: install
 	@if [ -f $(MAIN) ]; then \
