@@ -12,11 +12,13 @@ HF_HOME := $(GOINFRE)/.llm
 UV_CACHE_DIR := $(GOINFRE)/.uv-cache
 UV_PYTHON_INSTALL_DIR := $(GOINFRE)/.uv-python
 UV_PROJECT_ENVIRONMENT := $(GOINFRE)/cmb-venv
+UV_HTTP_TIMEOUT := 120
 
 export HF_HOME
 export UV_CACHE_DIR
 export UV_PYTHON_INSTALL_DIR
 export UV_PROJECT_ENVIRONMENT
+export UV_HTTP_TIMEOUT
 
 ENV = $(UV_PROJECT_ENVIRONMENT)
 
@@ -41,6 +43,7 @@ clean:
 	@find . -type d -name "__pycache__" -exec rm -rf {} +
 	@find . -type d -name ".mypy_cache" -exec rm -rf {} +
 	@find . -type d -name ".pytest_cache" -exec rm -rf {} +
+	@find ./data/ -type d -name "output" -exec rm -rf {} +
 
 fclean: clean
 	$(RM) $(ENV)
