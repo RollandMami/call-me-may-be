@@ -1,9 +1,10 @@
 import json
 import argparse
 import importlib
+import numpy as np
 from math import inf
 from pathlib import Path
-import numpy as np
+from .function import FunctionModel
 from llm_sdk import Small_LLM_Model
 try:
     load_dotenv = importlib.import_module("dotenv").load_dotenv
@@ -42,8 +43,42 @@ def check_args(args: argparse.Namespace) -> None:
         raise FileNotFoundError("Input file not found")
     
 
-def get_func_name() -> np.array:
-    ...
+def get_func_name(model, allowed_func, eos_ids, prompt) -> str:
+    input_ids = model.encode(prompt.strip())[0].tolist()
+    current_prefix = "fn"
+    for _ in range(MAX_TOKENS):
+        allowed_tokens = set()
+        for func in allowed_func:
+            if func.startswith(current_prefix):
+                ids = model.encode(func)[0].tolist()
+                allowed_tokens.update(ids)
+        allowed_tokens.update(eos_ids)
+        # list token proba:
+        logits = model.get_logits_from_input_ids(input_ids)
+        logits = [
+            -float(inf) if index not in allowed_tokens else logit
+            for index, logit in enumerate(logits)
+        ]
+        # obtention du max proba
+        next_id = int(np.argmax(logits))
+        if next_id in eos_ids:
+            break
+        text = model.decode([next_id])
+        if "\n" in text:
+            break
+        if current_prefix in allowed_func:
+            break
+        if any(func.startswith(current_prefix+text) for func in allowed_func):
+            current_prefix += text
+            input_ids.append(next_id)
+        else:
+            break
+    final_output = model.decode(input_ids)
+    print("\nRésultat généré :\n", final_output)
+    if current_prefix in allowed_func:
+        return current_prefix
+    else:
+        return "Null"
 
 def main() -> None:
     load_dotenv()
@@ -70,41 +105,11 @@ def main() -> None:
             # 2.1 boucle pour chaque prompte
         with open(prompt_path, "r") as p:
             prompt_db = json.load(p)
-        prompt = [item.get("prompt").lower() for item in prompt_db if "prompt" in item]
+        prompts = [item.get("prompt").lower() for item in prompt_db if "prompt" in item]
 
+        for prompt in prompts:
+            print(get_func_name(model, allowed_func, eos_ids, prompt))
         
-        input_ids = model.encode(prompt[2].strip())[0].tolist()
-        current_prefix = "fn"
-        
-        for _ in range(MAX_TOKENS):
-            allowed_tokens = set()
-            for func in allowed_func:
-                if func.startswith(current_prefix):
-                    ids = model.encode(func)[0].tolist()
-                    allowed_tokens.update(ids)
-            allowed_tokens.union(eos_ids)
-            # list token proba:
-            logits = model.get_logits_from_input_ids(input_ids)
-            logits = [
-                -float(inf) if index not in allowed_tokens else logit
-                for index, logit in enumerate(logits)
-            ]
-            # obtention du max proba
-            next_id = int(np.argmax(logits))
-            if next_id in eos_ids:
-                break
-            text = model.decode([next_id])
-            if "\n" in text:
-                break
-            if current_prefix in allowed_func:
-                break
-            if any(func.startswith(current_prefix+text) for func in allowed_func):
-                current_prefix += text
-                input_ids.append(next_id)
-
-        final_output = model.decode(input_ids)
-        print("\nRésultat généré :\n", final_output)
-        print(current_prefix)
         # GENERATION DU RESULTAT
         #-----------------------
         # ECRITURE DE L'OUTPUT
