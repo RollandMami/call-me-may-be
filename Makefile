@@ -27,17 +27,13 @@ PYTHON = $(BIN)/python3
 
 install:
 	@mkdir -p $(UV_CACHE_DIR) $(HF_HOME)
-	uv sync -q
+	uv sync
 
 run: install
 	uv run -q python -m $(MAIN)
 
 debug: install
-	@if [ -f $(MAIN) ]; then \
-		uv run -q python3 -m pdb $(MAIN); \
-	else \
-		echo "\nPas de fichier main\n"; \
-	fi
+	uv run python -m pdb -m $(MAIN) --debug
 
 clean:
 	@find . -type d -name "__pycache__" -exec rm -rf {} +

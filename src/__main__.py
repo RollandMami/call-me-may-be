@@ -1,4 +1,5 @@
 import json
+import re
 import argparse
 import traceback
 import numpy as np
@@ -67,47 +68,128 @@ def build_prompt(user_prompt: str, function_db: list) -> str:
     )
     return prompt
 
-def build_candidate_tokens(model, allowed_fucntion) -> dict:
+def build_args_prompt(user_prompt: str, func: dict) -> str:
+    params = ", ".join(f"{k}: {v.get('type', 'unknown')}"
+                       for k, v in func.get("parameters", {}).items())
+    return (
+        "<|im_start|>system\n"
+        "Tu extrais les valeurs des arguments d'une fonction à partir de la "
+        "demande de l'utilisateur. Réponds uniquement en JSON.\n\n"
+        f"Fonction : {func['name']}({params}) : {func.get('description', '')}"
+        "<|im_end|>\n"
+        f"<|im_start|>user\n{user_prompt}<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        f'{{"function": "{func["name"]}", "arguments": {{'
+    )
+
+def build_candidate_tokens(model, allowed_func) -> dict:
     with open(model.get_path_to_vocab_file(), "r", encoding="utf-8") as f:
         vocab = json.load(f)
     candidates = {}
     for txt, tid in vocab.items():
-        if txt and any(txt in fn for fn in allowed_fucntion):
+        if txt and any(txt in fn for fn in allowed_func):
             candidates[tid] = txt
     return candidates
 
-def get_func(model: Small_LLM_Model, allowed_func: list, eos_ids, prompt: str, args) -> str:
+def build_value_tokens(model) -> tuple:
+    with open(model.get_path_to_vocab_file(), "r", encoding="utf-8") as f:
+        vocab = json.load(f)
+    number_ids = {tid for txt, tid in vocab.items() if re.fullmatch(r"[0-9\-]+", txt)}
+    stop_ids = {vocab[t] for t in (",", "}") if t in vocab}
+    string_texts = {tid: model.decode([tid]) for tid in vocab.values()}
+    return number_ids, stop_ids, string_texts
+
+def get_func(model: Small_LLM_Model, allowed_func: list, eos_ids, prompt: str, candidates, args) -> str:
     input_ids = model.encode(prompt.strip())[0].tolist()
     current_prefix = ""
     for _ in range(MAX_TOKENS):
-        candidates = build_candidate_tokens(model, ...)
         allowed = {
             tid for tid, txt in candidates.items()
             if any(f.startswith(current_prefix + txt) for f in allowed_func)
         }
-        # list token proba:
+        if current_prefix in allowed_func:
+            allowed |= eos_ids
+
         logits = np.array(model.get_logits_from_input_ids(input_ids), dtype=float)
         mask = np.full_like(logits, -np.inf)
         mask[list(allowed)] = 0
-        # obtention du max proba
         next_id = int(np.argmax(logits + mask))
         if next_id in eos_ids:
             break
-        text = model.decode([next_id])
+        current_prefix += candidates[next_id]
+        input_ids.append(next_id)
         
         if args.debug:
-            print('>>>',text)
-        if "\n" in text:
-            break
+            print(">>>", repr(candidates[next_id]), "->", current_prefix)
 
-        if any(func.startswith(current_prefix+text) for func in allowed_func):
-            current_prefix += text
+        if current_prefix in allowed_func and not any(
+            f != current_prefix and f.startswith(current_prefix) 
+            for f in allowed_func
+        ):
+            break
+    
+    return current_prefix if current_prefix in allowed_func else "Null"
+
+def generate_value(model, input_ids, kind, eos_ids, number_ids, stop_ids, string_texts):
+    """Génère une valeur. Modifie input_ids. Renvoie le texte brut."""
+    text = ""
+    for _ in range(MAX_TOKENS):
+        logits = np.array(model.get_logits_from_input_ids(input_ids), dtype=float)
+        mask = np.full_like(logits, -np.inf)
+
+        if kind in ("number", "integer"):
+            allowed = set(number_ids)
+            if text:                       # on peut s'arrêter après au moins un caractère
+                allowed |= stop_ids | eos_ids
+        else:  # string
+            allowed = {tid for tid, t in string_texts.items()
+                       if "\n" not in t and "\\" not in t}
+            allowed |= eos_ids
+
+        mask[list(allowed)] = 0
+        next_id = int(np.argmax(logits + mask))
+
+        if kind in ("number", "integer"):
+            if next_id in stop_ids or next_id in eos_ids:
+                break
+            text += string_texts[next_id] if next_id in string_texts else ""
             input_ids.append(next_id)
         else:
-            break
-    final_output = model.decode(input_ids)
-    print("\nRésultat généré :\n", final_output)
-    return current_prefix if current_prefix in allowed_func else "Null"
+            if next_id in eos_ids:
+                break
+            piece = string_texts[next_id]
+            if '"' in piece:               # guillemet fermant : fin de la string
+                text += piece.split('"')[0]
+                break
+            text += piece
+            input_ids.append(next_id)
+    return text
+
+def get_arguments(model, prompt, func, eos_ids, value_tokens) -> dict:
+    number_ids, stop_ids, string_texts = value_tokens
+    input_ids = model.encode(build_args_prompt(prompt, func))[0].tolist()
+    args_out = {}
+
+    for i, (key, spec) in enumerate(func.get("parameters", {}).items()):
+        kind = spec.get("type", "string")
+        forced = ("" if i == 0 else ", ") + f'"{key}": ' + ('"' if kind == "string" else "")
+        input_ids += model.encode(forced)[0].tolist()
+
+        raw = generate_value(model, input_ids, kind, eos_ids,
+                             number_ids, stop_ids, string_texts)
+
+        if kind == "string":
+            args_out[key] = raw
+            input_ids += model.encode('"')[0].tolist()   # on referme la string
+        elif kind == "integer":
+            args_out[key] = int(float(raw)) if raw else 0
+        else:
+            try:
+                args_out[key] = int(raw) if raw.lstrip("-").isdigit() else float(raw)
+            except ValueError:
+                args_out[key] = 0
+    return args_out
+
 
 def main() -> None:
     load_dotenv()
@@ -128,22 +210,30 @@ def main() -> None:
         with open(function_json_path, "r") as f:
             function_db = json.load(f)
         allowed_func= [item.get("name") for item in function_db if "name" in item]
-
+        candidates = build_candidate_tokens(model, allowed_func)
+        value_tokens = build_value_tokens(model)
+        func_by_name = {f["name"]: f for f in function_db}
+        results = []
         #2. recuperation des promptes
             # 2.1 boucle pour chaque prompte
         with open(prompt_path, "r") as p:
             prompt_db = json.load(p)
         prompts = [item.get("prompt") for item in prompt_db if "prompt" in item]
 
-        if not args.debug:
-            for prompt in prompts:
-                print(get_func(model, allowed_func, eos_ids, build_prompt(prompt, function_db), args))
-        else:
-            print(get_func(model, allowed_func, eos_ids, build_prompt(prompts[0], function_db), args))
+        to_run = prompts[:1] if args.debug else prompts
+        for prompt in to_run:
+            name = get_func(model, allowed_func, eos_ids, build_prompt(prompt, function_db),
+                            candidates, args)
+            if name is None:
+                print("Aucune fonction trouvée pour :", prompt)
+                continue
+            arguments = get_arguments(model, prompt, func_by_name[name], eos_ids, value_tokens)
+            result = {"function": name, "arguments": arguments}
+            print("Function Calling System:", json.dumps(result, ensure_ascii=False))
+            results.append({"prompt": prompt, **result})
         
-        # GENERATION DU RESULTAT
-        #-----------------------
-        # ECRITURE DE L'OUTPUT
+        with open(output_file_path, "w", encoding="utf-8") as out:
+            json.dump(results, out, indent=2, ensure_ascii=False)
 
 
     except KeyboardInterrupt as k:
