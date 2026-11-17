@@ -3,14 +3,13 @@ import re
 import argparse
 import traceback
 import numpy as np
-from typing import cast
 from pathlib import Path
-from typing import Any, List
+from typing import Any, cast
 from numpy.typing import NDArray
 from llm_sdk import Small_LLM_Model
 
 try:
-    from dotenv import load_dotenv  # type: ignore
+    from dotenv import load_dotenv
 except (ImportError, AttributeError):
     print("Importation error: python-dotenv n'est pas installé")
     raise
@@ -43,6 +42,10 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+
+def encode_ids(model: Small_LLM_Model, text: str) -> list[int]:
+    return cast(list[int], model.encode(text)[0].tolist())
 
 
 def check_args(args: argparse.Namespace) -> None:
@@ -96,7 +99,7 @@ def build_candidate_tokens(
     model: Small_LLM_Model, allowed_func: list[str]
 ) -> dict[int, str]:
     with open(model.get_path_to_vocab_file(), "r", encoding="utf-8") as f:
-        vocab = json.load(f)
+        vocab: dict[str, int] = json.load(f)
     candidates: dict[int, str] = {}
     for txt, tid in vocab.items():
         if txt and any(txt in fn for fn in allowed_func):
@@ -104,15 +107,17 @@ def build_candidate_tokens(
     return candidates
 
 
-def build_value_tokens(model: Small_LLM_Model) -> tuple[Any, Any, Any]:
+def build_value_tokens(
+    model: Small_LLM_Model,
+) -> tuple[set[int], set[int], dict[int, str]]:
     with open(model.get_path_to_vocab_file(), "r", encoding="utf-8") as f:
-        vocab = json.load(f)
+        vocab: dict[str, int] = json.load(f)
     number_ids = {
-        tid for txt, tid in vocab.items() if re.fullmatch(r"[0-9\-]+", txt)
+        tid for txt, tid in vocab.items() if re.fullmatch(r"[0-9.\-]+", txt)
     }
     stop_ids = {vocab[t] for t in (",", "}") if t in vocab}
     string_texts = {
-        tid: model.decode([tid]) for tid in vocab.values()   # type: ignore
+        tid: model.decode([tid]) for tid in vocab.values()
     }
     return number_ids, stop_ids, string_texts
 
@@ -125,7 +130,7 @@ def get_func(
     candidates: dict[int, str],
     args: argparse.Namespace,
 ) -> str | None:
-    input_ids = cast(List[int], model.encode(prompt.strip())[0].tolist())
+    input_ids = encode_ids(model, prompt.strip())
     current_prefix: str = ""
     for _ in range(MAX_TOKENS):
         allowed = {
@@ -171,10 +176,10 @@ def generate_value(
     """Génère une valeur. Modifie input_ids. Renvoie le texte brut."""
     text = ""
     for _ in range(MAX_TOKENS):
-        logits: np.ndarray[float] = np.array(
+        logits: NDArray[np.float64] = np.array(
             model.get_logits_from_input_ids(input_ids), dtype=float
         )
-        mask: np.ndarray[float] = np.full_like(logits, -np.inf)
+        mask: NDArray[np.float64] = np.full_like(logits, -np.inf)
 
         if kind in ("number", "integer"):
             allowed = set(number_ids)
@@ -211,14 +216,12 @@ def generate_value(
 def get_arguments(
     model: Small_LLM_Model,
     prompt: str,
-    func: dict[str, dict[str, str]],
+    func: dict[str, Any],
     eos_ids: set[int],
     value_tokens: tuple[set[int], set[int], dict[int, str]],
 ) -> dict[str, int | float | str]:
     number_ids, stop_ids, string_texts = value_tokens
-    input_ids: list[int] = model.encode(build_args_prompt(prompt, func))[
-        0
-    ].tolist()  # type: ignore
+    input_ids: list[int] = encode_ids(model, build_args_prompt(prompt, func))
     args_out: dict[str, int | float | str] = {}
 
     for i, (key, spec) in enumerate(func.get("parameters", {}).items()):
@@ -228,7 +231,7 @@ def get_arguments(
             + f'"{key}": '
             + ('"' if kind == "string" else "")
         )
-        input_ids += model.encode(forced)[0].tolist()  # type: ignore
+        input_ids += encode_ids(model, forced)
 
         raw = generate_value(
             model, input_ids, kind, eos_ids, number_ids, stop_ids, string_texts
@@ -236,7 +239,7 @@ def get_arguments(
 
         if kind == "string":
             args_out[key] = raw
-            input_ids += model.encode('"')[0].tolist()  # type: ignore
+            input_ids += encode_ids(model, '"')
         elif kind == "integer":
             args_out[key] = int(float(raw)) if raw else 0
         else:
@@ -255,9 +258,7 @@ def main() -> None:
     try:
         check_args(args)
         model: Small_LLM_Model = Small_LLM_Model()
-        eos_ids: set[int] = set(
-            model.encode("<|im_end|>")[0].tolist()
-        )  # type: ignore
+        eos_ids: set[int] = set(encode_ids(model, "<|im_end|>"))
         # 0. definition des variables:
         function_json_path = args.functions_definition
         prompt_path = args.input
@@ -267,9 +268,9 @@ def main() -> None:
         # 1. recuperation du nom des fonctions:
         # 1.1 ouverture du ficher function:
         with open(function_json_path, "r") as f:
-            function_db = json.load(f)
-        allowed_func = [
-            item.get("name") for item in function_db if "name" in item
+            function_db: list[dict[str, Any]] = json.load(f)
+        allowed_func: list[str] = [
+            item["name"] for item in function_db if "name" in item
         ]
         candidates: dict[int, str] = build_candidate_tokens(
             model, allowed_func
@@ -277,14 +278,14 @@ def main() -> None:
         value_tokens: tuple[set[int], set[int], dict[int, str]] = (
             build_value_tokens(model)
         )
-        func_by_name = {f["name"]: f for f in function_db}
-        results: list[dict[str, int | float | str]] = []
-        # 2. recuperation des promptes
-        # 2.1 boucle pour chaque prompte
+        func_by_name: dict[str, dict[str, Any]] = {
+            f["name"]: f for f in function_db}
+        results: list[dict[str, Any]] = []
+
         with open(prompt_path, "r") as p:
-            prompt_db = json.load(p)
+            prompt_db: list[dict[str, Any]] = json.load(p)
         prompts = [
-            item.get("prompt") for item in prompt_db if "prompt" in item
+            item["prompt"] for item in prompt_db if "prompt" in item
         ]
 
         to_run = prompts[:1] if args.debug else prompts
@@ -303,7 +304,7 @@ def main() -> None:
             arguments: dict[str, int | float | str] = get_arguments(
                 model, prompt, func_by_name[name], eos_ids, value_tokens
             )
-            result: dict[str, int | float | str] = {
+            result: dict[str, Any] = {
                 "name": name,
                 "parameters": arguments,
             }

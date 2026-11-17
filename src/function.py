@@ -1,10 +1,7 @@
 try:
-    from pydantic import ( # type: ignore
+    from pydantic import (
         BaseModel,
-        # Field,
-        # model_validator,
-        # field_validator,
-        )
+    )
 except (ImportError, ModuleNotFoundError) as e:
     raise ModuleNotFoundError(f"{type(e).__name__}: {e}")
 

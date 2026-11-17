@@ -45,11 +45,11 @@ fclean: clean
 	$(RM) $(ENV)
 
 lint: install
-	uv run -q mypy . $(MYPY_FLAGS) --exclude="^\$(ENV)"
-	uv run -q flake8 . --exclude=$(ENV)
+	uv run -q mypy . $(MYPY_FLAGS) --exclude="^(llm_sdk|$(ENV))"
+	uv run -q flake8 . --exclude=$(ENV),llm_sdk
 
 lint-strict: install
-	uv run -q mypy . --strict --exclude="^\$(ENV)"
-	uv run -q flake8 . --exclude=$(ENV)
+	uv run -q mypy . --strict --exclude="^(llm_sdk|$(ENV))"
+	uv run -q flake8 . --exclude=$(ENV),llm_sdk
 
 .PHONY: install run debug clean fclean lint lint-strict
