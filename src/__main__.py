@@ -265,8 +265,6 @@ def main() -> None:
         output_file_path = Path(args.output)
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 1. recuperation du nom des fonctions:
-        # 1.1 ouverture du ficher function:
         with open(function_json_path, "r") as f:
             function_db: list[dict[str, Any]] = json.load(f)
         allowed_func: list[str] = [
