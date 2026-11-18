@@ -30,11 +30,26 @@ def build_args_prompt(user_prompt: str, func: dict[str, Any]) -> str:
         f"{k}: {v.get('type', 'unknown')}"
         for k, v in func.get("parameters", {}).items()
     )
+
+    examples = (
+        "Exemples :\n"
+        'Demande : Additionne 2 et 3\n'
+        '{"function": "fn_add_numbers", "arguments": {"a": 2, "b": 3}}\n'
+        'Demande : Remplace les chiffres par # dans "abc123"\n'
+        '{"function": "fn_substitute_string_with_regex", "arguments": '
+        '{"source_string": "abc123", "regex": "\\\\d+", '
+        '"replacement": "#"}}\n\n'
+        'Demande : Replace all spaces in "a b c" with underscores\n'
+        '{"function": "fn_substitute_string_with_regex", "arguments": '
+        '{"source_string": "a b c", "regex": " ", "replacement": "_"}}\n'
+    )
     return (
         "<|im_start|>system\n"
         "Tu extrais les valeurs des arguments d'une fonction à partir de la "
         "demande de l'utilisateur. Réponds uniquement en JSON.\n\n"
-        f"Fonction : {func['name']}({params}) : {func.get('description', '')}"
+        f"{examples}"
+        f"Fonction : {func['name']}({params}) : "
+        f"{func.get('description', '')}"
         "<|im_end|>\n"
         f"<|im_start|>user\n{user_prompt}<|im_end|>\n"
         "<|im_start|>assistant\n"

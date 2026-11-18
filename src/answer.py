@@ -1,3 +1,5 @@
+import re
+import json
 import argparse
 import numpy as np
 from typing import Any
@@ -7,6 +9,34 @@ from llm_sdk import Small_LLM_Model
 from .prompts import build_args_prompt
 
 MAX_TOKENS = 100
+NUM_PREFIX = {
+    "number": re.compile(r"-?(\d+(\.\d*)?)?"),
+    "integer": re.compile(r"-?\d*"),
+}
+NUM_FULL = {
+    "number": re.compile(r"-?\d+(\.\d+)?"),
+    "integer": re.compile(r"-?\d+"),
+}
+
+
+def find_end_quote(s: str) -> int:
+    """Index du premier guillemet non échappé, ou -1."""
+    i = 0
+    while i < len(s):
+        if s[i] == "\\":
+            i += 2
+            continue
+        if s[i] == '"':
+            return i
+        i += 1
+    return -1
+
+
+def decode_json_string(raw: str) -> str:
+    try:
+        return str(json.loads(f'"{raw}"'))
+    except json.JSONDecodeError:
+        return raw
 
 
 def get_func(
@@ -69,14 +99,16 @@ def generate_value(
         mask: NDArray[np.float64] = np.full_like(logits, -np.inf)
 
         if kind in ("number", "integer"):
-            allowed = set(number_ids)
-            if text:
+            allowed = {
+                tid for tid in number_ids
+                if NUM_PREFIX[kind].fullmatch(text + string_texts[tid])
+            }
+            if NUM_FULL[kind].fullmatch(text):
                 allowed |= stop_ids | eos_ids
         else:
             allowed = {
-                tid
-                for tid, t in string_texts.items()
-                if "\n" not in t and "\\" not in t
+                tid for tid, t in string_texts.items()
+                if "\n" not in t and "\r" not in t
             }
             allowed |= eos_ids
 
@@ -91,11 +123,18 @@ def generate_value(
         else:
             if next_id in eos_ids:
                 break
+            text += string_texts[next_id]
+            end = find_end_quote(text)
             piece = string_texts[next_id]
-            if '"' in piece:
-                text += piece.split('"')[0]
+            if end >= 0:
+                kept = text[:end]
+                tail = kept[
+                    len(text) - len(piece):
+                ] if len(kept) > len(text) - len(piece) else ""
+                if tail:
+                    input_ids += encode_ids(model, tail)
+                text = kept
                 break
-            text += piece
             input_ids.append(next_id)
     return text
 
@@ -125,15 +164,10 @@ def get_arguments(
         )
 
         if kind == "string":
-            args_out[key] = raw
+            args_out[key] = decode_json_string(raw)
             input_ids += encode_ids(model, '"')
         elif kind == "integer":
-            args_out[key] = int(float(raw)) if raw else 0
+            args_out[key] = int(raw)
         else:
-            try:
-                args_out[key] = (
-                    int(raw) if raw.lstrip("-").isdigit() else float(raw)
-                )
-            except ValueError:
-                args_out[key] = 0
+            args_out[key] = float(raw) if "." in raw else int(raw)
     return args_out
