@@ -1,4 +1,5 @@
-.venv
-venv
 *cache*
-output
+*output*
+.venv/
+.env/
+.env

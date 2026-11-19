@@ -1,129 +1,131 @@
+"""Entrypoint script for running constrained function calling evaluation.
+
+Loads environment variables and CLI arguments, validates input schemas,
+prepares token constraints for the language model, runs function selection and
+argument extraction across test prompts, and writes results to JSON.
+"""
+
 import json
-import argparse
-import importlib
-import numpy as np
-from math import inf
+import time
+import traceback
+from typing import Any
 from pathlib import Path
-from .function import FunctionModel
+from datetime import datetime
 from llm_sdk import Small_LLM_Model
+
+
+from .prompts import build_prompt
+from .validation import load_functions
+from .parser import parse_args, check_args
+from .answer import get_func, get_arguments
+from .tokens import (build_candidate_tokens, build_value_tokens,
+                     encode_ids)
+
 try:
-    load_dotenv = importlib.import_module("dotenv").load_dotenv
+    from dotenv import load_dotenv
 except (ImportError, AttributeError):
-    print("Importation error: python-dotenv n'est pas installé")
+    print("Importation error: python-dotenv is not installed")
     raise
 
-MAX_TOKENS = 100
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Test de function calling")
-    
-    parser.add_argument(
-        "--functions_definition",
-        default="data/input/functions_definition.json",
-        help="Chemin du fichier des définitions de fonctions",
-    )
-    parser.add_argument(
-        "--input",
-        default="data/input/function_calling_tests.json",
-        help="Chemin du fichier JSON des tests",
-    )
-    parser.add_argument(
-        "--output",
-        default="data/output/function_calls.json",
-        help="Chemin du fichier JSON de sortie",
-    )
-    
-    return parser.parse_args()
-
-def check_args(args: argparse.Namespace) -> None:
-    if not Path(args.functions_definition).exists():
-        raise FileNotFoundError("Function definitions file not found")
-    if not Path(args.input).exists():
-        raise FileNotFoundError("Input file not found")
-    
-
-def get_func_name(model, allowed_func, eos_ids, prompt) -> str:
-    input_ids = model.encode(prompt.strip())[0].tolist()
-    current_prefix = "fn"
-    for _ in range(MAX_TOKENS):
-        allowed_tokens = set()
-        for func in allowed_func:
-            if func.startswith(current_prefix):
-                ids = model.encode(func)[0].tolist()
-                allowed_tokens.update(ids)
-        allowed_tokens.update(eos_ids)
-        # list token proba:
-        logits = model.get_logits_from_input_ids(input_ids)
-        logits = [
-            -float(inf) if index not in allowed_tokens else logit
-            for index, logit in enumerate(logits)
-        ]
-        # obtention du max proba
-        next_id = int(np.argmax(logits))
-        if next_id in eos_ids:
-            break
-        text = model.decode([next_id])
-        if "\n" in text:
-            break
-        if current_prefix in allowed_func:
-            break
-        if any(func.startswith(current_prefix+text) for func in allowed_func):
-            current_prefix += text
-            input_ids.append(next_id)
-        else:
-            break
-    final_output = model.decode(input_ids)
-    print("\nRésultat généré :\n", final_output)
-    if current_prefix in allowed_func:
-        return current_prefix
-    else:
-        return "Null"
 
 def main() -> None:
+    """Execute the function calling pipeline on configured test prompts.
+
+    Parses command-line arguments, verifies input paths, initializes
+    ``Small_LLM_Model`` and vocabulary token sets, iterates over input prompts
+    (limited to the first prompt in debug mode), extracts predicted function
+    names and arguments, and serializes results to the output JSON file.
+
+    Raises:
+        FileNotFoundError: If a required input file cannot be found during
+            execution.
+        ValueError: If function definitions fail loading or schema validation.
+        KeyboardInterrupt: If execution is interrupted by the user.
+    """
     load_dotenv()
-    model = Small_LLM_Model()
-    eos_ids = set(model.encode("<|im_end|>")[0].tolist())
-    
     args = parse_args()
     try:
+        start = time.perf_counter()
+        print("\n", "="*30, sep="")
+        print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*30, "\n")
         check_args(args)
-        # 0. definition des variables:
-        function_json_path = args.functions_definition
+        model: Small_LLM_Model = Small_LLM_Model()
+        eos_ids: set[int] = set(encode_ids(model, "<|im_end|>"))
+        functions = load_functions(args.functions_definition)
         prompt_path = args.input
         output_file_path = Path(args.output)
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
 
+        function_db: list[dict[str, Any]] = [f.model_dump() for f in functions]
+        allowed_func: list[str] = [
+            item["name"] for item in function_db if "name" in item
+        ]
+        candidates: dict[int, str] = build_candidate_tokens(
+            model, allowed_func
+        )
+        value_tokens: tuple[set[int], set[int], dict[int, str]] = (
+            build_value_tokens(model)
+        )
+        func_by_name: dict[str, dict[str, Any]] = {
+            f["name"]: f for f in function_db}
+        results: list[dict[str, Any]] = []
 
-        #1. recuperation du nom des fonctions:
-            # 1.1 ouverture du ficher function:
-        with open(function_json_path, "r") as f:
-            function_db = json.load(f)
-        allowed_func= [item.get("name").lower() for item in function_db if "name" in item]
-
-        #2. recuperation des promptes
-            # 2.1 boucle pour chaque prompte
         with open(prompt_path, "r") as p:
-            prompt_db = json.load(p)
-        prompts = [item.get("prompt").lower() for item in prompt_db if "prompt" in item]
+            prompt_db: list[dict[str, Any]] = json.load(p)
+        prompts = [
+            item["prompt"] for item in prompt_db if "prompt" in item
+        ]
 
         for prompt in prompts:
-            print(get_func_name(model, allowed_func, eos_ids, prompt))
-        
-        # GENERATION DU RESULTAT
-        #-----------------------
-        # ECRITURE DE L'OUTPUT
+            name: str | None = get_func(
+                model,
+                allowed_func,
+                eos_ids,
+                build_prompt(prompt, function_db),
+                candidates,
+                args,
+            )
+            if name is None:
+                print("No function found :", prompt)
+                continue
+            arguments: dict[str, int | float | str] = get_arguments(
+                model, prompt, func_by_name[name], eos_ids, value_tokens
+            )
+            result: dict[str, Any] = {
+                "name": name,
+                "parameters": arguments,
+            }
+            print(
+                "Function Calling System:",
+                json.dumps(result, ensure_ascii=False),
+            )
+            results.append({"prompt": prompt, **result})
 
+        with open(output_file_path, "w", encoding="utf-8") as out:
+            json.dump(results, out, indent=2, ensure_ascii=False)
+
+        elapsed_ms = round((time.perf_counter() - start) * 1000)
+        m, rest = divmod(elapsed_ms, 60_000)
+        s, ms = divmod(rest, 1000)
+        print(f"\nEnd time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("\n", "="*30, sep="")
+        print(f"Time elapsed: {m}min {s}s {ms}ms")
+        print("="*30, "\n")
 
     except KeyboardInterrupt as k:
         print("interuption keyboard", k)
     except FileNotFoundError as e:
         print(e)
 
+
 if __name__ == "__main__":
     try:
         main()
+    except (FileNotFoundError, ValueError) as e:
+        print(e)
     except KeyboardInterrupt as k:
         print("interuption keyboard", k)
     except Exception as e:
         print(e)
+        traceback.print_exc()
