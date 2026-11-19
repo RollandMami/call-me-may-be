@@ -304,11 +304,6 @@ For a prompt that selects a function with `k` parameters, the model is called on
 
 Constrained decoding guarantees the **form** of the output, not its **semantic correctness**: the model may still choose the wrong function or extract a wrong value. In practice, the 0.6B model performs well on the provided cases because the function descriptions are clear, the schema is injected in the prompt and few-shot examples are provided. The most delicate cases are the **regex-based substitutions** (e.g. "Replace all vowels … with asterisks"), where the model must invent a correct regular expression such as `[aeiouAEIOU]`.
 
-| Metric                                       | Result            |
-| -------------------------------------------- | ----------------- |
-| Valid JSON / schema compliance               | 100 % (by design) |
-| Correct function selected                    | _to fill in_ / 11 |
-| Fully correct arguments                      | _to fill in_ / 11 |
 
 ### Speed
 
@@ -402,5 +397,3 @@ AI assistants were used as a **support tool**, not as a substitute for understan
 | Docstrings and code documentation                                                          | Help to draft and harmonise the Google-style docstrings                                             |
 | Linting / typing issues                                                                    | Help to interpret `mypy` and `flake8` messages                                                      |
 | Writing this `README.md`                                                                   | Drafting and structuring of the document from the project source code, then reviewed and corrected  |
-
-The core of the project — the decoding strategy, the masks and the implementation choices — was designed and written by the author.
