@@ -87,7 +87,7 @@ def main() -> None:
                 args,
             )
             if name is None:
-                print("Aucune fonction trouvée pour :", prompt)
+                print("No function found :", prompt)
                 continue
             arguments: dict[str, int | float | str] = get_arguments(
                 model, prompt, func_by_name[name], eos_ids, value_tokens
