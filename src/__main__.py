@@ -1,7 +1,16 @@
+"""Entrypoint script for running constrained function calling evaluation.
+
+Loads environment variables and CLI arguments, validates input schemas,
+prepares token constraints for the language model, runs function selection and
+argument extraction across test prompts, and writes results to JSON.
+"""
+
 import json
+import time
 import traceback
-from pathlib import Path
 from typing import Any
+from pathlib import Path
+from datetime import datetime
 from llm_sdk import Small_LLM_Model
 
 
@@ -15,14 +24,31 @@ from .tokens import (build_candidate_tokens, build_value_tokens,
 try:
     from dotenv import load_dotenv
 except (ImportError, AttributeError):
-    print("Importation error: python-dotenv n'est pas installé")
+    print("Importation error: python-dotenv is not installed")
     raise
 
 
 def main() -> None:
+    """Execute the function calling pipeline on configured test prompts.
+
+    Parses command-line arguments, verifies input paths, initializes
+    ``Small_LLM_Model`` and vocabulary token sets, iterates over input prompts
+    (limited to the first prompt in debug mode), extracts predicted function
+    names and arguments, and serializes results to the output JSON file.
+
+    Raises:
+        FileNotFoundError: If a required input file cannot be found during
+            execution.
+        ValueError: If function definitions fail loading or schema validation.
+        KeyboardInterrupt: If execution is interrupted by the user.
+    """
     load_dotenv()
     args = parse_args()
     try:
+        start = time.perf_counter()
+        print("\n", "="*30, sep="")
+        print(f"Start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*30, "\n")
         check_args(args)
         model: Small_LLM_Model = Small_LLM_Model()
         eos_ids: set[int] = set(encode_ids(model, "<|im_end|>"))
@@ -51,8 +77,7 @@ def main() -> None:
             item["prompt"] for item in prompt_db if "prompt" in item
         ]
 
-        to_run = prompts[:1] if args.debug else prompts
-        for prompt in to_run:
+        for prompt in prompts:
             name: str | None = get_func(
                 model,
                 allowed_func,
@@ -79,6 +104,14 @@ def main() -> None:
 
         with open(output_file_path, "w", encoding="utf-8") as out:
             json.dump(results, out, indent=2, ensure_ascii=False)
+
+        elapsed_ms = round((time.perf_counter() - start) * 1000)
+        m, rest = divmod(elapsed_ms, 60_000)
+        s, ms = divmod(rest, 1000)
+        print(f"\nEnd time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("\n", "="*30, sep="")
+        print(f"Time elapsed: {m}min {s}s {ms}ms")
+        print("="*30, "\n")
 
     except KeyboardInterrupt as k:
         print("interuption keyboard", k)
